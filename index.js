@@ -256,6 +256,8 @@ eWeLink.prototype.configureAccessory = function(accessory) {
 
 // Sample function to show how developer can add accessory dynamically from outside event
 eWeLink.prototype.addAccessory = function(device) {
+    this.log("device %s", JSON.stringify(device));
+
 
     // Here we need to check if it is currently there
     if (this.accessories.get(device.deviceid)) {
@@ -269,6 +271,11 @@ eWeLink.prototype.addAccessory = function(device) {
         this.log("A device with an unknown type was returned. It will be skipped.", device.type);
         return;
     }
+
+  if(!device.hasOwnProperty('params')){
+    this.log("Skipping [%s]",device.deviceid);
+    return;
+  }
 
     this.log("Found Accessory with Name : [%s], Manufacturer : [%s], Status : [%s], Is Online : [%s], API Key: [%s] ", device.name, device.productModel, device.params.switch, device.online, device.apikey);
 
@@ -396,7 +403,7 @@ eWeLink.prototype.getPowerState = function(accessory, callback) {
             }
 
         } else if (filteredResponse.length > 1) {
-            // More than one device matches our Device ID. This should not happen.      
+            // More than one device matches our Device ID. This should not happen.
             platform.log("ERROR: The response contained more than one device with Device ID [%s]. Filtered response follows.", device.deviceid);
             platform.log(filteredResponse);
             callback("The response contained more than one device with Device ID " + device.deviceid);
@@ -441,7 +448,7 @@ eWeLink.prototype.setPowerState = function(accessory, isOn, callback) {
     // platform.log( string );
 
     if (platform.isSocketOpen) {
-        
+
         platform.wsc.send(string);
 
         // TODO Here we need to wait for the response to the socket
