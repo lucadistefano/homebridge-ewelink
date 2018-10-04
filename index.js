@@ -28,6 +28,24 @@ module.exports = function(homebridge) {
     homebridge.registerPlatform("homebridge-eWeLink", "eWeLink", eWeLink, true);
 
 };
+function getNumSwitches(model){
+  let switchesAmount = 1;
+  //PSA-BHA-GL temp/hum
+  //ITA-GZ1-GL tv
+  //PSC-B67-GL power
+  switch(model) {
+      case 'PSF-B04-GL' :
+          switchesAmount = 3;
+          break;
+      case 'PSB-B04-GL' :
+          switchesAmount = 2;
+          break;
+      case 'PSF-A04-GL' :
+          switchesAmount = 4;
+          break;
+  }
+  return switchesAmount;
+}
 
 // Platform constructor
 function eWeLink(log, config, api) {
@@ -149,17 +167,18 @@ function eWeLink(log, config, api) {
                         accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Model, deviceInformationFromWebApi.extra.extra.model);
                         accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.FirmwareRevision, deviceInformationFromWebApi.params.fwVersion);
 
-                        switch(deviceInformationFromWebApi.extra.extra.model) {
-                            case 'PSF-B04-GL' :
-                                switchesAmount = 3;
-                                break;
-                            case 'PSB-B04-GL' :
-                                switchesAmount = 2;
-                                break;
-                            case 'PSF-A04-GL' :
-                                switchesAmount = 4;
-                                break;
-                        }
+                        // switch(deviceInformationFromWebApi.extra.extra.model) {
+                        //     case 'PSF-B04-GL' :
+                        //         switchesAmount = 3;
+                        //         break;
+                        //     case 'PSB-B04-GL' :
+                        //         switchesAmount = 2;
+                        //         break;
+                        //     case 'PSF-A04-GL' :
+                        //         switchesAmount = 4;
+                        //         break;
+                        // }
+                        switchesAmount = getNumSwitches(deviceInformationFromWebApi.extra.extra.model);
 
                         if(switchesAmount > 1) {
                             platform.log(switchesAmount + " channels device has been set: " + deviceInformationFromWebApi.extra.extra.model);
@@ -175,19 +194,21 @@ function eWeLink(log, config, api) {
 
                     } else {
                         let deviceToAdd = platform.devicesFromApi.get(deviceId);
-                        let switchesAmount = 1;
+                        //let switchesAmount = 1;
 
-                        switch(deviceToAdd.extra.extra.model) {
-                            case 'PSF-B04-GL' :
-                                switchesAmount = 3;
-                                break;
-                            case 'PSB-B04-GL' :
-                                switchesAmount = 2;
-                                break;
-                            case 'PSF-A04-GL' :
-                                switchesAmount = 4;
-                                break;
-                        }
+                        // switch(deviceToAdd.extra.extra.model) {
+                        //     case 'PSF-B04-GL' :
+                        //         switchesAmount = 3;
+                        //         break;
+                        //     case 'PSB-B04-GL' :
+                        //         switchesAmount = 2;
+                        //         break;
+                        //     case 'PSF-A04-GL' :
+                        //         switchesAmount = 4;
+                        //         break;
+                        // }
+
+                        let switchesAmount = getNumSwitches(deviceToAdd.extra.extra.model);
 
                         if(switchesAmount > 1) {
                             for(let i=0; i!==switchesAmount; i++) {
@@ -330,7 +351,7 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
         let id = deviceId.split("CH");
         channel = id[1];
     }
-    
+
     if(!device.hasOwnProperty('params')){
       this.log("Skipping [%s]",device.deviceid);
       return;
@@ -368,17 +389,18 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
     accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Identify, false);
     accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.FirmwareRevision, device.params.fwVersion);
 
-    switch(device.extra.extra.model) {
-        case 'PSF-B04-GL' :
-             accessory.context.switches = 3;
-            break;
-        case 'PSB-B04-GL' :
-            accessory.context.switches = 2;
-            break;
-        case 'PSF-A04-GL' :
-            accessory.context.switches = 4;
-            break;
-    }
+accessory.context.switches = getNumSwitches(device.extra.extra.model);
+    // switch(device.extra.extra.model) {
+    //     case 'PSF-B04-GL' :
+    //          accessory.context.switches = 3;
+    //         break;
+    //     case 'PSB-B04-GL' :
+    //         accessory.context.switches = 2;
+    //         break;
+    //     case 'PSF-A04-GL' :
+    //         accessory.context.switches = 4;
+    //         break;
+    // }
 
     this.accessories.set(device.deviceid, accessory);
 
@@ -411,6 +433,15 @@ eWeLink.prototype.updatePowerStateCharacteristic = function(deviceId, state, dev
     if (state === 'on') {
         isOn = true;
     }
+
+    this.log("[DEBUG] id [%s] device %s", deviceId, JSON.stringify(device));
+
+    if(typeof accessory === 'undefined'){
+      platform.log("Accessory of [%s] not found, skipped", deviceId);
+      return;
+    }
+
+    this.log("[DEBUG] accessory %s", JSON.stringify(accessory));
 
     platform.log("Updating recorded Characteristic.On for [%s] to [%s]. No request will be sent to the device.", accessory.displayName, isOn);
 
