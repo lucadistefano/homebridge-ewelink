@@ -28,6 +28,7 @@ module.exports = function(homebridge) {
     homebridge.registerPlatform("homebridge-eWeLink", "eWeLink", eWeLink, true);
 
 };
+
 function getNumSwitches(model){
   let switchesAmount = 1;
   //PSA-BHA-GL temp/hum
@@ -50,11 +51,17 @@ function getNumSwitches(model){
 // Platform constructor
 function eWeLink(log, config, api) {
 
-    if(!config || !config['authenticationToken']){
+    if(!config || (!config['authenticationToken'] && ((!config['phoneNumber'] && !config['email']) || !config['password'] || !config['imei']))){
         log("Initialization skipped. Missing configuration data.");
         return;
     }
 
+    if (!config['apiHost']) {
+        config['apiHost'] = 'us-api.coolkit.cc:8080';
+    }
+    if (!config['webSocketApi']) {
+        config['webSocketApi'] = 'us-pconnect3.coolkit.cc';
+    }
     log("Intialising eWeLink");
 
     let platform = this;
@@ -63,7 +70,7 @@ function eWeLink(log, config, api) {
     this.config = config;
     this.accessories = new Map();
     this.authenticationToken = config['authenticationToken'];
-    this.devicesFromApi = new Map();;
+    this.devicesFromApi = new Map();
 
     if (api) {
         // Save the API object as plugin needs to register new accessory via this object
@@ -78,6 +85,7 @@ function eWeLink(log, config, api) {
 
             platform.log("A total of [%s] accessories were loaded from the local cache", platform.accessories.size);
 
+            this.login(function () {
             // Get a list of all devices from the API, and compare it to the list of cached devices.
             // New devices will be added, and devices that exist in the cache but not in the web list
             // will be removed from Homebridge.
@@ -167,17 +175,6 @@ function eWeLink(log, config, api) {
                         accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Model, deviceInformationFromWebApi.extra.extra.model);
                         accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.FirmwareRevision, deviceInformationFromWebApi.params.fwVersion);
 
-                        // switch(deviceInformationFromWebApi.extra.extra.model) {
-                        //     case 'PSF-B04-GL' :
-                        //         switchesAmount = 3;
-                        //         break;
-                        //     case 'PSB-B04-GL' :
-                        //         switchesAmount = 2;
-                        //         break;
-                        //     case 'PSF-A04-GL' :
-                        //         switchesAmount = 4;
-                        //         break;
-                        // }
                         switchesAmount = getNumSwitches(deviceInformationFromWebApi.extra.extra.model);
 
                         if(switchesAmount > 1) {
@@ -194,20 +191,7 @@ function eWeLink(log, config, api) {
 
                     } else {
                         let deviceToAdd = platform.devicesFromApi.get(deviceId);
-                        //let switchesAmount = 1;
-
-                        // switch(deviceToAdd.extra.extra.model) {
-                        //     case 'PSF-B04-GL' :
-                        //         switchesAmount = 3;
-                        //         break;
-                        //     case 'PSB-B04-GL' :
-                        //         switchesAmount = 2;
-                        //         break;
-                        //     case 'PSF-A04-GL' :
-                        //         switchesAmount = 4;
-                        //         break;
-                        // }
-
+           
                         let switchesAmount = getNumSwitches(deviceToAdd.extra.extra.model);
 
                         if(switchesAmount > 1) {
@@ -241,9 +225,17 @@ function eWeLink(log, config, api) {
 
                 platform.wsc.onmessage = function(message) {
 
+                    if (message == 'pong') {
+                        return;
+                    }
                     //platform.log("WebSocket messge received: ", message);
 
-                    let json = JSON.parse(message);
+                    let json;
+                    try {
+                        json = JSON.parse(message);
+                    } catch (e) {
+                        return;
+                    }
 
                     if (json.hasOwnProperty("action")) {
 
@@ -257,6 +249,12 @@ function eWeLink(log, config, api) {
 
                         }
 
+                    } else if (json.hasOwnProperty('config') && json.config.hb && json.config.hbInterval) {
+                        if (!platform.hbInterval) {
+                            platform.hbInterval = setInterval(function () {
+                                platform.wsc.send('ping');
+                            }, json.config.hbInterval * 1000);
+                        }
                     }
 
                 };
@@ -296,9 +294,14 @@ function eWeLink(log, config, api) {
                 platform.wsc.onclose = function(e) {
                     platform.log("WebSocket was closed. Reason [%s]", e);
                     platform.isSocketOpen = false;
+                        if (platform.hbInterval) {
+                            clearInterval(platform.hbInterval);
+                            platform.hbInterval = null;
                 }
+                };
 
             }); // End WebSocket
+            }.bind(this)); // End login
 
         }.bind(this));
     }
@@ -336,7 +339,7 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
     // Here we need to check if it is currently there
     if (this.accessories.get(deviceId ? deviceId : device.deviceid)) {
         this.log("Not adding [%s] as it already exists in the cache", deviceId ? deviceId : device.deviceid);
-        return
+        return;
     }
 
     let platform = this;
@@ -357,8 +360,13 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
       return;
     }
 
-    const status = channel && device.params.switches && device.params.switches[channel-1] ? device.params.switches[channel-1].switch : device.params.switch || "off"
-    this.log("Found Accessory with Name : [%s], Manufacturer : [%s], Status : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, status, device.online, device.apikey);
+    try {   
+        const status = channel && device.params.switches && device.params.switches[channel-1] ? device.params.switches[channel-1].switch : device.params.switch || "off";
+        this.log("Found Accessory with Name : [%s], Manufacturer : [%s], Status : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, status, device.online, device.apikey);
+    } catch (e) {
+        this.log("Problem accessory Accessory with Name : [%s], Manufacturer : [%s], Error : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, e, device.online, device.apikey);
+    }    
+
     const accessory = new Accessory(device.name + (channel ? ' CH ' + channel : ''), UUIDGen.generate((deviceId ? deviceId : device.deviceid).toString()));
 
     accessory.context.deviceId = deviceId ? deviceId : device.deviceid;
@@ -389,18 +397,7 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
     accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Identify, false);
     accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.FirmwareRevision, device.params.fwVersion);
 
-accessory.context.switches = getNumSwitches(device.extra.extra.model);
-    // switch(device.extra.extra.model) {
-    //     case 'PSF-B04-GL' :
-    //          accessory.context.switches = 3;
-    //         break;
-    //     case 'PSB-B04-GL' :
-    //         accessory.context.switches = 2;
-    //         break;
-    //     case 'PSF-A04-GL' :
-    //         accessory.context.switches = 4;
-    //         break;
-    // }
+    accessory.context.switches = getNumSwitches(device.extra.extra.model);
 
     this.accessories.set(device.deviceid, accessory);
 
@@ -463,6 +460,9 @@ eWeLink.prototype.getPowerState = function(accessory, callback) {
             return;
         } else if (!body || body.hasOwnProperty('error')) {
             platform.log("An error was encountered while requesting a list of devices while interrogating power status. Verify your configuration options. Response was [%s]", JSON.stringify(body));
+            if (body.hasOwnProperty('error') && [401, 402].indexOf(parseInt(body.error)) !== -1) {
+                platform.relogin();
+            }
             callback('An error was encountered while requesting a list of devices to interrogate power status for your device');
             return;
         }
@@ -595,11 +595,13 @@ eWeLink.prototype.setPowerState = function(accessory, isOn, callback) {
 
     if (platform.isSocketOpen) {
 
-        platform.wsc.send(string);
+        setTimeout(function() {
+            platform.wsc.send(string);
 
-        // TODO Here we need to wait for the response to the socket
+            // TODO Here we need to wait for the response to the socket
 
-        callback();
+            callback();
+        }, 1);
 
     } else {
         callback('Socket was closed. It will reconnect automatically; please retry your command');
@@ -619,11 +621,142 @@ eWeLink.prototype.removeAccessory = function(accessory) {
         'eWeLink', [accessory]);
 };
 
+eWeLink.prototype.login = function(callback) {
+    if (!this.config.phoneNumber && !this.config.email || !this.config.password || !this.config.imei) {
+        this.log('phoneNumber / email / password / imei not found in config, skipping login');
+        callback();
+        return;
+    }
+    
+    var data = {};
+    if (this.config.phoneNumber) {
+        data.phoneNumber = this.config.phoneNumber;
+    } else if (this.config.email) {
+        data.email = this.config.email;
+    }
+    data.password = this.config.password;
+    data.version = '6';
+    data.ts = '' + Math.floor(new Date().getTime() / 1000);
+    data.nonce = '' + nonce();
+    data.appid = 'oeVkj2lYFGnJu5XUtWisfW4utiN4u9Mq';
+    data.imei = this.config.imei;
+    data.os = 'iOS';
+    data.model = 'iPhone10,6';
+    data.romVersion = '11.1.2';
+    data.appVersion = '3.5.3';
+    
+    let json = JSON.stringify(data);
+    this.log('Sending login request with user credentials: %s', json);
+    
+    //let appSecret = "248,208,180,108,132,92,172,184,256,152,256,144,48,172,220,56,100,124,144,160,148,88,28,100,120,152,244,244,120,236,164,204";
+    //let f = "ab!@#$ijklmcdefghBCWXYZ01234DEFGHnopqrstuvwxyzAIJKLMNOPQRSTUV56789%^&*()";
+    //let decrypt = function(r){var n="";return r.split(',').forEach(function(r){var t=parseInt(r)>>2,e=f.charAt(t);n+=e}),n.trim()};
+    let decryptedAppSecret = '6Nz4n0xA8s8qdxQf2GqurZj2Fs55FUvM'; //decrypt(appSecret);
+    let sign = require('crypto').createHmac('sha256', decryptedAppSecret).update(json).digest('base64');
+    this.log('Login signature: %s', sign);
+    
+    let webClient = request.createClient('https://' + this.config.apiHost);
+    webClient.headers['Authorization'] = 'Sign ' + sign;
+    webClient.headers['Content-Type'] = 'application/json;charset=UTF-8';
+    webClient.post('/api/user/login', data , function(err, res, body) {
+        if (err) {
+            this.log("An error was encountered while logging in. Error was [%s]", err);
+            callback();
+            return;
+        }
+        
+        // If we receive 301 error, switch to new region and try again
+        if (body.hasOwnProperty('error') && body.error == 301 && body.hasOwnProperty('region')) {
+            let idx = this.config.apiHost.indexOf('-');
+            if (idx == -1) {
+                this.log("Received new region [%s]. However we cannot construct the new API host url.", body.region);
+                callback();
+                return;
+            }
+            let newApiHost = body.region + this.config.apiHost.substring(idx);
+            if (this.config.apiHost != newApiHost) {
+                this.log("Received new region [%s], updating API host to [%s].", body.region, newApiHost);
+                this.config.apiHost = newApiHost;
+                this.login(callback);
+                return;
+            }
+        }
+        
+        if (!body.at) {
+            let response = JSON.stringify(body);
+            this.log("Server did not response with an authentication token. Response was [%s]", response);
+            callback();
+            return;
+        }
+        
+        this.log('Authentication token received [%s]', body.at);
+        this.authenticationToken = body.at;
+        this.config.authenticationToken = body.at;
+        this.webClient = request.createClient('https://' + this.config['apiHost']);
+        this.webClient.headers['Authorization'] = 'Bearer ' + body.at;
+        
+        this.getWebSocketHost(function () {
+            callback(body.at);
+        }.bind(this));
+    }.bind(this));
+};
+
+eWeLink.prototype.getWebSocketHost = function (callback) {
+    var data = {};
+    data.accept = 'mqtt,ws';
+    data.version = '6';
+    data.ts = '' + Math.floor(new Date().getTime() / 1000);
+    data.nonce = '' + nonce();
+    data.appid = 'oeVkj2lYFGnJu5XUtWisfW4utiN4u9Mq';
+    data.imei = this.config.imei;
+    data.os = 'iOS';
+    data.model = 'iPhone10,6';
+    data.romVersion = '11.1.2';
+    data.appVersion = '3.5.3';
+    
+    let webClient = request.createClient('https://' + this.config.apiHost.replace('-api', '-disp'));
+    webClient.headers['Authorization'] = 'Bearer ' + this.authenticationToken;
+    webClient.headers['Content-Type'] = 'application/json;charset=UTF-8';
+    webClient.post('/dispatch/app', data , function(err, res, body) {
+        if (err) {
+            this.log("An error was encountered while getting websocket host. Error was [%s]", err);
+            callback();
+            return;
+        }
+        
+        if (!body.domain) {
+            let response = JSON.stringify(body);
+            this.log("Server did not response with a websocket host. Response was [%s]", response);
+            callback();
+            return;
+        }
+        
+        this.log('WebSocket host received [%s]', body.domain);
+        this.config['webSocketApi'] = body.domain;
+        if (this.wsc) {
+            this.wsc.url = 'wss://' + body.domain + ':8080/api/ws';
+        }
+        callback(body.domain);
+    }.bind(this));
+};
+eWeLink.prototype.relogin = function (callback) {
+    let platform = this;
+    platform.login(function () {
+        // Reconnect websocket
+        if (platform.isSocketOpen) {
+            platform.wsc.instance.terminate();
+            platform.wsc.onclose();
+            platform.wsc.reconnect();
+        }
+        callback && callback();
+    });
+};
 /* WEB SOCKET STUFF */
 
 function WebSocketClient() {
     this.number = 0; // Message number
     this.autoReconnectInterval = 5 * 1000; // ms
+    this.pendingReconnect = false;
 }
 WebSocketClient.prototype.open = function(url) {
     this.url = url;
@@ -669,10 +802,13 @@ WebSocketClient.prototype.send = function(data, option) {
 WebSocketClient.prototype.reconnect = function(e) {
     // console.log(`WebSocketClient: retry in ${this.autoReconnectInterval}ms`, e);
 
+    if (this.pendingReconnect) return;
+    this.pendingReconnect = true;
     this.instance.removeAllListeners();
 
     let platform = this;
     setTimeout(function() {
+        platform.pendingReconnect = false;
         console.log("WebSocketClient: reconnecting...");
         platform.open(platform.url);
     }, this.autoReconnectInterval);
