@@ -11,6 +11,7 @@ let webClient = '';
 let apiKey = 'UNCONFIGURED';
 let authenticationToken = 'UNCONFIGURED';
 let Accessory, Service, Characteristic, UUIDGen;
+let debug = false;
 
 module.exports = function(homebridge) {
     console.log("homebridge API version: " + homebridge.version);
@@ -55,7 +56,10 @@ function eWeLink(log, config, api) {
         log("Initialization skipped. Missing configuration data.");
         return;
     }
-
+    
+    if (!config['log']) {
+        debug = config['log']=='debug';
+    }
     if (!config['apiHost']) {
         config['apiHost'] = 'us-api.coolkit.cc:8080';
     }
@@ -92,7 +96,8 @@ function eWeLink(log, config, api) {
 
             let url = 'https://' + this.config['apiHost'];
 
-            platform.log("Requesting a list of devices from eWeLink HTTPS API at [%s]", url);
+            //if(debug)
+              platform.log("Requesting a list of devices from eWeLink HTTPS API at [%s]", url);
 
             this.webClient = request.createClient(url);
 
@@ -178,12 +183,14 @@ function eWeLink(log, config, api) {
                         switchesAmount = getNumSwitches(deviceInformationFromWebApi.extra.extra.model);
 
                         if(switchesAmount > 1) {
+                        if(debug)
                             platform.log(switchesAmount + " channels device has been set: " + deviceInformationFromWebApi.extra.extra.model);
                             for(let i=0; i!==switchesAmount; i++) {
                                 accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Name, deviceInformationFromWebApi.name + ' CH ' + (i+1));
                                 platform.updatePowerStateCharacteristic(deviceId + 'CH' + (i+1), deviceInformationFromWebApi.params.switches[i].switch, platform.devicesFromApi.get(deviceId));
                             }
                         } else  {
+                        if(debug)
                             platform.log("Single channel device has been set: " + deviceInformationFromWebApi.extra.extra.model);
                             accessory.getService(Service.AccessoryInformation).setCharacteristic(Characteristic.Name, deviceInformationFromWebApi.name);
                             platform.updatePowerStateCharacteristic(deviceId, deviceInformationFromWebApi.params.switch);
@@ -196,11 +203,13 @@ function eWeLink(log, config, api) {
 
                         if(switchesAmount > 1) {
                             for(let i=0; i!==switchesAmount; i++) {
-                                platform.log('Device [%s], ID : [%s] will be added', deviceToAdd.name, deviceId + 'CH' + (i+1));
+                                if(debug)
+                                  platform.log('Device [%s], ID : [%s] will be added', deviceToAdd.name, deviceId + 'CH' + (i+1));
                                 platform.addAccessory(deviceToAdd, deviceId + 'CH' + (i+1));
                             }
                         } else {
-                            platform.log('Device [%s], ID : [%s] will be added', deviceToAdd.name, deviceToAdd.deviceid);
+                            if(debug)
+                              platform.log('Device [%s], ID : [%s] will be added', deviceToAdd.name, deviceToAdd.deviceid);
                             platform.addAccessory(deviceToAdd);
                         }
                     }
@@ -210,8 +219,8 @@ function eWeLink(log, config, api) {
                 if (platform.devicesFromApi.size > 0) {
                     platform.devicesFromApi.forEach(checkIfDeviceIsAlreadyConfigured);
                 }
-
-                platform.log("API key retrieved from web service is [%s]", platform.apiKey);
+                //if(debug)
+                  platform.log("API key retrieved from web service is [%s]", platform.apiKey);
 
                 // We have our devices, now open a connection to the WebSocket API
 
@@ -228,6 +237,7 @@ function eWeLink(log, config, api) {
                     if (message == 'pong') {
                         return;
                     }
+                    //if(debug)
                     //platform.log("WebSocket messge received: ", message);
 
                     let json;
@@ -240,7 +250,7 @@ function eWeLink(log, config, api) {
                     if (json.hasOwnProperty("action")) {
 
                         if (json.action === 'update') {
-
+                            //if(debug)
                             //platform.log("Update message received for device [%s]", json.deviceid);
 
                             if (json.hasOwnProperty("params") && json.params.hasOwnProperty("switch")) {
@@ -276,7 +286,7 @@ function eWeLink(log, config, api) {
                     payload.nonce = '' + nonce();
                     payload.apkVesrion = "1.8";
                     payload.os = 'ios';
-                    payload.at = config.authenticationToken;
+                    payload.at = platform.authenticationToken;
                     payload.apikey = platform.apiKey;
                     payload.ts = '' + ts;
                     payload.model = 'iPhone10,6';
@@ -284,8 +294,8 @@ function eWeLink(log, config, api) {
                     payload.sequence = platform.getSequence();
 
                     let string = JSON.stringify(payload);
-
-                    platform.log('Sending login request [%s]', string);
+                    if(debug)
+                      platform.log('Sending login request [%s]', string);
 
                     platform.wsc.send(string);
 
@@ -334,7 +344,7 @@ eWeLink.prototype.configureAccessory = function(accessory) {
 
 // Sample function to show how developer can add accessory dynamically from outside event
 eWeLink.prototype.addAccessory = function(device, deviceId = null) {
-    this.log("device %s", JSON.stringify(device));
+//    this.log("device %s", JSON.stringify(device));
 
     // Here we need to check if it is currently there
     if (this.accessories.get(deviceId ? deviceId : device.deviceid)) {
@@ -362,7 +372,8 @@ eWeLink.prototype.addAccessory = function(device, deviceId = null) {
 
     try {   
         const status = channel && device.params.switches && device.params.switches[channel-1] ? device.params.switches[channel-1].switch : device.params.switch || "off";
-        this.log("Found Accessory with Name : [%s], Manufacturer : [%s], Status : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, status, device.online, device.apikey);
+        if(debug)
+          this.log("Found Accessory with Name : [%s], Manufacturer : [%s], Status : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, status, device.online, device.apikey);
     } catch (e) {
         this.log("Problem accessory Accessory with Name : [%s], Manufacturer : [%s], Error : [%s], Is Online : [%s], API Key: [%s] ", device.name + (channel ? ' CH ' + channel : ''), device.productModel, e, device.online, device.apikey);
     }    
@@ -431,16 +442,17 @@ eWeLink.prototype.updatePowerStateCharacteristic = function(deviceId, state, dev
         isOn = true;
     }
 
-    this.log("[DEBUG] id [%s] device %s", deviceId, JSON.stringify(device));
+    if(debug)
+      this.log("[DEBUG] id [%s] device %s", deviceId, JSON.stringify(device));
 
     if(typeof accessory === 'undefined'){
       platform.log("Accessory of [%s] not found, skipped", deviceId);
       return;
     }
-
-    this.log("[DEBUG] accessory %s", JSON.stringify(accessory));
-
-    platform.log("Updating recorded Characteristic.On for [%s] to [%s]. No request will be sent to the device.", accessory.displayName, isOn);
+    if(debug)
+      this.log("[DEBUG] accessory %s", JSON.stringify(accessory));
+    if(debug)
+      platform.log("Updating recorded Characteristic.On for [%s] to [%s]. No request will be sent to the device.", accessory.displayName, isOn);
 
     accessory.getService(Service.Switch)
         .setCharacteristic(Characteristic.On, isOn);
@@ -450,8 +462,9 @@ eWeLink.prototype.updatePowerStateCharacteristic = function(deviceId, state, dev
 
 eWeLink.prototype.getPowerState = function(accessory, callback) {
     let platform = this;
-
-    platform.log("Requesting power state for [%s]", accessory.displayName);
+    
+    if(debug)
+      platform.log("Requesting power state for [%s]", accessory.displayName);
 
     this.webClient.get('/api/user/device', function(err, res, body) {
 
@@ -570,7 +583,8 @@ eWeLink.prototype.setPowerState = function(accessory, isOn, callback) {
         targetState = 'on';
     }
 
-    platform.log("Setting power state to [%s] for device [%s]", targetState, accessory.displayName);
+    if(debug)
+      platform.log("Setting power state to [%s] for device [%s]", targetState, accessory.displayName);
 
     let payload = {};
     payload.action = 'update';
@@ -624,8 +638,13 @@ eWeLink.prototype.removeAccessory = function(accessory) {
 eWeLink.prototype.login = function(callback) {
     if (!this.config.phoneNumber && !this.config.email || !this.config.password || !this.config.imei) {
         this.log('phoneNumber / email / password / imei not found in config, skipping login');
-        callback();
+        //callback();
         return;
+    }
+    
+    if(this.config.authenticationToken){
+      callback();
+      return;
     }
     
     var data = {};
@@ -646,14 +665,16 @@ eWeLink.prototype.login = function(callback) {
     data.appVersion = '3.5.3';
     
     let json = JSON.stringify(data);
-    this.log('Sending login request with user credentials: %s', json);
+    if(debug)
+      this.log('Sending login request with user credentials: %s', json);
     
     //let appSecret = "248,208,180,108,132,92,172,184,256,152,256,144,48,172,220,56,100,124,144,160,148,88,28,100,120,152,244,244,120,236,164,204";
     //let f = "ab!@#$ijklmcdefghBCWXYZ01234DEFGHnopqrstuvwxyzAIJKLMNOPQRSTUV56789%^&*()";
     //let decrypt = function(r){var n="";return r.split(',').forEach(function(r){var t=parseInt(r)>>2,e=f.charAt(t);n+=e}),n.trim()};
     let decryptedAppSecret = '6Nz4n0xA8s8qdxQf2GqurZj2Fs55FUvM'; //decrypt(appSecret);
     let sign = require('crypto').createHmac('sha256', decryptedAppSecret).update(json).digest('base64');
-    this.log('Login signature: %s', sign);
+    if(debug)
+      this.log('Login signature: %s', sign);
     
     let webClient = request.createClient('https://' + this.config.apiHost);
     webClient.headers['Authorization'] = 'Sign ' + sign;
@@ -688,10 +709,10 @@ eWeLink.prototype.login = function(callback) {
             callback();
             return;
         }
-        
-        this.log('Authentication token received [%s]', body.at);
+        if(debug)
+          this.log('Authentication token received [%s]', body.at);
         this.authenticationToken = body.at;
-        this.config.authenticationToken = body.at;
+        //this.config.authenticationToken = body.at;
         this.webClient = request.createClient('https://' + this.config['apiHost']);
         this.webClient.headers['Authorization'] = 'Bearer ' + body.at;
         
@@ -730,8 +751,8 @@ eWeLink.prototype.getWebSocketHost = function (callback) {
             callback();
             return;
         }
-        
-        this.log('WebSocket host received [%s]', body.domain);
+        if(debug)
+          this.log('WebSocket host received [%s]', body.domain);
         this.config['webSocketApi'] = body.domain;
         if (this.wsc) {
             this.wsc.url = 'wss://' + body.domain + ':8080/api/ws';
